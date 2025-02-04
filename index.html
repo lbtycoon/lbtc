@@ -78,6 +78,12 @@
             height: 40px;
             border-radius: 50%;
             object-fit: cover;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .user-img:hover {
+            transform: scale(1.1);
         }
 
         .message-content {
@@ -165,16 +171,99 @@
             box-shadow: 0 8px 32px rgba(0,0,0,0.3);
         }
 
-        .admin-panel h3 {
-            margin-bottom: 15px;
+        .profile-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
         }
 
-        .admin-panel select, .admin-panel input, .admin-panel button {
-            padding: 10px;
+        .profile-modal-content {
+            background: #2d2d2d;
+            padding: 30px;
+            border-radius: 15px;
+            width: 400px;
+            position: relative;
+            text-align: center;
+        }
+
+        .user-img-large {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            margin-bottom: 15px;
+            object-fit: cover;
+        }
+
+        .profile-description {
+            margin: 15px 0;
+            color: #ccc;
+        }
+
+        .close {
+            position: absolute;
+            top: 10px;
+            right: 20px;
+            font-size: 28px;
+            cursor: pointer;
+            color: #888;
+        }
+
+        .close:hover {
+            color: #fff;
+        }
+
+        .chat-header {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 20px;
+            background: #333;
+        }
+
+        .profile-editor {
+            display: none;
+            background: #2d2d2d;
+            padding: 30px;
+            border-radius: 15px;
+            width: 400px;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 1001;
+        }
+
+        textarea {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            background: #444;
             border: none;
             border-radius: 8px;
-            margin-bottom: 10px;
-            width: 100%;
+            color: white;
+            font-family: 'Segoe UI', sans-serif;
+            resize: vertical;
+        }
+
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-left: 5px;
+        }
+
+        .online {
+            background: #2ecc71;
+        }
+
+        .offline {
+            background: #e74c3c;
         }
     </style>
 </head>
@@ -187,14 +276,11 @@
             <button onclick="login()">Login/Register</button>
         </div>
 
-        <div class="profile-setup" id="profileSetup" style="display: none;">
-            <h2>Set Up Profile</h2>
-            <input type="text" id="username" placeholder="Username">
-            <input type="text" id="profilePic" placeholder="Profile Picture URL">
-            <button onclick="saveProfile()">Save Profile</button>
-        </div>
-
         <div class="chat-container" id="chatContainer">
+            <div class="chat-header">
+                <button onclick="showProfileEditor()">Edit Profile</button>
+                <button onclick="logout()">Logout</button>
+            </div>
             <div class="messages" id="messages"></div>
             <div class="typing-indicator" id="typingIndicator"></div>
             <div class="input-area">
@@ -213,6 +299,27 @@
                     <option value="member">Member</option>
                 </select>
                 <button onclick="assignTitleAndBadge()">Assign Title and Badge</button>
+            </div>
+        </div>
+
+        <div class="profile-editor" id="profileEditor">
+            <span class="close" onclick="closeProfileEditor()">&times;</span>
+            <h2>Edit Profile</h2>
+            <input type="text" id="editUsername" placeholder="Username">
+            <input type="text" id="editProfilePic" placeholder="Profile Picture URL">
+            <textarea id="editDescription" placeholder="Description"></textarea>
+            <button onclick="saveProfile()">Save Changes</button>
+        </div>
+
+        <div class="profile-modal" id="profileModal">
+            <div class="profile-modal-content">
+                <span class="close" onclick="closeProfileModal()">&times;</span>
+                <img id="profileViewerPic" class="user-img-large" src="">
+                <h2 id="profileViewerUsername"></h2>
+                <div id="profileViewerBadge" class="badge"></div>
+                <p id="profileViewerTitle" class="badge"></p>
+                <p id="profileViewerDescription" class="profile-description"></p>
+                <div class="status-indicator" id="profileStatus"></div>
             </div>
         </div>
     </div>
@@ -241,11 +348,24 @@
         auth.onAuthStateChanged(user => {
             if (user) {
                 currentUser = user;
+                setupPresence();
                 checkProfileExists();
             } else {
                 showLogin();
             }
         });
+
+        function setupPresence() {
+            const userStatusRef = db.ref('.info/connected');
+            const userProfileRef = db.ref(`users/${currentUser.uid}`);
+            
+            userStatusRef.on('value', (snap) => {
+                if (snap.val()) {
+                    userProfileRef.update({ status: 'online' });
+                    userProfileRef.onDisconnect().update({ status: 'offline' });
+                }
+            });
+        }
 
         function login() {
             const email = document.getElementById('email').value;
@@ -254,31 +374,54 @@
                 .catch(() => auth.createUserWithEmailAndPassword(email, password));
         }
 
+        function logout() {
+            auth.signOut();
+            location.reload();
+        }
+
         function checkProfileExists() {
             db.ref(`users/${currentUser.uid}`).once('value').then(snap => {
                 if (snap.exists()) {
                     showChat();
                 } else {
-                    document.getElementById('loginBox').style.display = 'none';
-                    document.getElementById('profileSetup').style.display = 'block';
+                    showProfileEditor(true);
                 }
             });
         }
 
+        function showProfileEditor(isNew = false) {
+            db.ref(`users/${currentUser.uid}`).once('value').then(snap => {
+                const user = snap.val() || {};
+                document.getElementById('editUsername').value = user.username || '';
+                document.getElementById('editProfilePic').value = user.profilePic || '';
+                document.getElementById('editDescription').value = user.description || '';
+                document.getElementById('profileEditor').style.display = 'block';
+                if(isNew) document.getElementById('chatContainer').style.display = 'none';
+            });
+        }
+
+        function closeProfileEditor() {
+            document.getElementById('profileEditor').style.display = 'none';
+        }
+
         function saveProfile() {
-            const username = document.getElementById('username').value;
-            const profilePic = document.getElementById('profilePic').value;
-            db.ref(`users/${currentUser.uid}`).set({
+            const username = document.getElementById('editUsername').value;
+            const profilePic = document.getElementById('editProfilePic').value;
+            const description = document.getElementById('editDescription').value;
+
+            db.ref(`users/${currentUser.uid}`).update({
                 username,
                 profilePic: profilePic || 'https://via.placeholder.com/40',
-                customTitle: '',
-                badge: ''
-            }).then(showChat);
+                description: description || '',
+                status: 'online'
+            }).then(() => {
+                closeProfileEditor();
+                showChat();
+            });
         }
 
         function showChat() {
             document.getElementById('loginBox').style.display = 'none';
-            document.getElementById('profileSetup').style.display = 'none';
             document.getElementById('chatContainer').style.display = 'block';
             loadMessages();
             setupTypingListener();
@@ -298,7 +441,6 @@
                 secretWord = '';
             }
             
-            // Prevent secretWord from growing indefinitely
             if (secretWord.length > 20) secretWord = '';
         }
 
@@ -339,7 +481,8 @@
                     profilePic: user.profilePic,
                     timestamp: Date.now(),
                     customTitle: user.customTitle,
-                    badge: user.badge
+                    badge: user.badge,
+                    uid: currentUser.uid
                 };
 
                 db.ref('messages').push(newMessage);
@@ -348,7 +491,7 @@
         }
 
         function loadMessages() {
-            db.ref('messages').on('child_added', snap => {
+            db.ref('messages').orderByChild('timestamp').on('child_added', snap => {
                 const msg = snap.val();
                 addMessageToDOM(msg);
             });
@@ -359,9 +502,9 @@
             const messageDiv = document.createElement('div');
             messageDiv.className = 'message';
             messageDiv.innerHTML = `
-                <img src="${msg.profilePic}" class="user-img">
+                <img src="${msg.profilePic}" class="user-img" data-uid="${msg.uid}">
                 <div class="message-content">
-                    <strong>${msg.username}</strong>
+                    <strong data-uid="${msg.uid}">${msg.username}</strong>
                     ${msg.customTitle ? `<span class="badge">${msg.customTitle}</span>` : ''}
                     ${msg.badge ? `<span class="badge ${msg.badge}">${msg.badge.toUpperCase()}</span>` : ''}
                     <p>${msg.text}</p>
@@ -403,6 +546,39 @@
                 indicator.style.opacity = '1';
             }
         }
+
+        function showUserProfile(uid) {
+            db.ref(`users/${uid}`).once('value').then(snap => {
+                const user = snap.val();
+                const modal = document.getElementById('profileModal');
+                modal.querySelector('#profileViewerPic').src = user.profilePic;
+                modal.querySelector('#profileViewerUsername').textContent = user.username;
+                modal.querySelector('#profileViewerDescription').textContent = user.description || 'No description available';
+                
+                const badgeElement = modal.querySelector('#profileViewerBadge');
+                badgeElement.textContent = user.badge ? user.badge.toUpperCase() : '';
+                badgeElement.className = `badge ${user.badge || ''}`;
+                
+                const titleElement = modal.querySelector('#profileViewerTitle');
+                titleElement.textContent = user.customTitle || '';
+                titleElement.style.display = user.customTitle ? 'inline-block' : 'none';
+
+                const statusElement = modal.querySelector('#profileStatus');
+                statusElement.className = `status-indicator ${user.status === 'online' ? 'online' : 'offline'}`;
+
+                modal.style.display = 'flex';
+            });
+        }
+
+        function closeProfileModal() {
+            document.getElementById('profileModal').style.display = 'none';
+        }
+
+        document.getElementById('messages').addEventListener('click', function(e) {
+            const target = e.target;
+            const uid = target.closest('[data-uid]')?.dataset.uid;
+            if (uid) showUserProfile(uid);
+        });
     </script>
 </body>
 </html>
